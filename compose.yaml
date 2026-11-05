@@ -1,0 +1,110 @@
+# Locked-down Hermes Agent stack: one agent container plus an allowlist proxy.
+# Only agent-example is defined. To add another agent, copy the agent-example blocks (service, proxy,
+# 2 networks, secret) and rename them. Never share one data dir between two containers.
+#
+# Pinned digests were checked against the registry on 2026-11-05 (docker buildx imagetools inspect).
+# Re-check them before use and scan every image you build or pull (Trivy). Treat this file as a starting
+# point to review, not as a guarantee.
+
+x-hardened: &hardened
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  read_only: true
+  pids_limit: 128
+  restart: "no"                                       # start on demand
+
+x-hermes: &hermes
+  <<: *hardened
+  # Base image: nousresearch/hermes-agent:v0.22.6, pinned by digest in the agent's Dockerfile.
+  # Runs as 10000:10000 with cap_drop ALL from the start (works; see the /run tmpfs below).
+  user: "10000:10000"
+  tmpfs:
+    - /tmp:rw,nosuid,size=512m
+    # s6 runtime. Non-root s6 refuses to start unless /run belongs to the container UID, and it execs its
+    # init from /run, so this tmpfs needs exec (Docker's tmpfs default is noexec). Both seen on first run.
+    - /run:rw,exec,nosuid,size=64m,uid=10000,gid=10000,mode=0755
+  pids_limit: 512
+  mem_limit: 4g
+  cpus: 2
+  command: ["gateway", "run"]
+
+services:
+  agent-example:
+    <<: *hermes
+    container_name: hermes-agent-example
+    # Local build: pinned Hermes base + pinned, checksum-verified gh. The localhost/ prefix keeps compose from
+    # ever pulling a same-named image from Docker Hub. Rebuild: docker compose build agent-example (then scan).
+    build:
+      context: ./agents/agent-example
+      dockerfile: Dockerfile
+    image: localhost/example/hermes-agent-example:v0.22.6-gh2.103.3
+    volumes:
+      - ./data/agent-example:/opt/data                   # HERMES_HOME (documented)
+      # Managed config: model, approvals, Slack options, toolset allowlist. Read-only, so the agent cannot change it.
+      - ./agents/agent-example/managed-config.yaml:/etc/hermes/config.yaml:ro
+    env_file: ["./secrets/agent-example.env"]
+    # GitHub token (fine-grained, ONE repository) as a read-only file, not an env var. Compose ignores
+    # uid/gid/mode for file secrets, so the host file itself must be owned by 10000:10000, mode 0400.
+    secrets:
+      - source: agent-example-github-token
+        target: /etc/agent/github_token
+    environment:
+      # Gateway API server (port 8642) intentionally off: Slack (Socket Mode) is the only interface.
+      # Intent: API off. v0.22.6 still binds 127.0.0.1:8642 inside the container (gateway listener); without an
+      # API_SERVER_KEY it fails closed (401 on /v1/*, only /health answers). No forwarder, nothing published.
+      API_SERVER_ENABLED: "false"
+      HTTP_PROXY: http://proxy-example:3128
+      HTTPS_PROXY: http://proxy-example:3128
+      NO_PROXY: localhost,127.0.0.1
+      # Dashboard intentionally off (HERMES_DASHBOARD unset).
+      # GitHub CLI: the gh wrapper reads the token from /etc/agent/github_token (secret below), never from the env:
+      # Hermes strips GITHUB_TOKEN/GH_TOKEN from terminal commands. No prompts, no update check.
+      GH_PROMPT_DISABLED: "1"
+      GH_NO_UPDATE_NOTIFIER: "1"
+      GH_CONFIG_DIR: /opt/data/.config/gh
+      # git gets credentials from gh for github.com only (same as `gh auth setup-git`), so the token is never
+      # written to a file or a clone URL. The empty first value resets any inherited helper.
+      GIT_CONFIG_COUNT: "2"
+      GIT_CONFIG_KEY_0: credential.https://github.com.helper
+      GIT_CONFIG_VALUE_0: ""
+      GIT_CONFIG_KEY_1: credential.https://github.com.helper
+      GIT_CONFIG_VALUE_1: "!gh auth git-credential"
+      # Commit identity: replace with the agent's own machine user. .invalid is a reserved, non-routable TLD.
+      GIT_AUTHOR_NAME: Example Agent
+      GIT_AUTHOR_EMAIL: agent@example.invalid
+      GIT_COMMITTER_NAME: Example Agent
+      GIT_COMMITTER_EMAIL: agent@example.invalid
+    networks: [agent-example-internal]                   # no ports published here
+    depends_on: [proxy-example]
+
+  proxy-example:
+    <<: *hardened
+    # Pinned by digest. The edge tag is mutable: on 2026-11-05 it already pointed at a newer digest than this one,
+    # which still exists in the registry. Scan before use; move the pin deliberately, never by tag.
+    image: ubuntu/squid:7.2-26.04_edge@sha256:74a4935c1329cde41522d2fbc8351101b9ac3be0b5129c49e1803ff6df589027
+    container_name: hermes-proxy-example
+    user: "584792:584792"                             # _daemon_, the image's own non-root user
+    # Run squid directly: the image's Pebble entrypoint needs a writable /var/lib/pebble/default (fails with read_only).
+    # Logs go to stdout/stderr and the pid file to /tmp (see squid-agent-example.conf).
+    entrypoint: ["/usr/sbin/squid-gnutls"]
+    command: ["-f", "/etc/squid/squid.conf", "-NYC"]
+    tmpfs:
+      - /tmp:rw,nosuid,size=64m,uid=584792,gid=584792,mode=0700
+      - /var/spool/squid:rw,nosuid,size=64m,uid=584792,gid=584792,mode=0700
+    volumes:
+      - ./proxy/squid-agent-example.conf:/etc/squid/squid.conf:ro
+    mem_limit: 256m
+    networks: [agent-example-internal, agent-example-egress]
+
+secrets:
+  agent-example-github-token:
+    file: ./secrets/agent-example.github_token         # gitignored; 10000:10000 mode 0400; never in the env file
+
+networks:
+  agent-example-internal:
+    internal: true                                    # no route to the internet
+  agent-example-egress:                                  # proxy-example (outbound) only; agent-example is NOT on it
+    # MTU 1280 (IPv6 minimum): on a host VPN with a smaller MTU (seen: WireGuard 1280), containers on a 1500 bridge
+    # announce a too-large MSS and the server's TLS certificate packets are dropped, so handshakes hang.
+    driver_opts:
+      com.docker.network.driver.mtu: "1280"

@@ -1,0 +1,27 @@
+# agent-example managed config. Mounted READ-ONLY at /etc/hermes/config.yaml (Hermes "managed scope").
+# Hermes deep-merges these keys ON TOP of /opt/data/config.yaml, so neither a user nor the agent itself
+# (it has a terminal and a writable data dir) can change them. Checked against Hermes v0.22.6 behaviour.
+#
+# Hermes FAILS OPEN on a missing or invalid file (it logs a warning and ignores it).
+# Verify the file is applied after every change or restart (scripts/check-config.sh, added in a later change).
+
+model: claude-sonnet-5-5          # Anthropic; promoted to model.default by Hermes. Pick the model you intend to pay for.
+
+approvals:
+  mode: manual                    # never "off" / --yolo outside a disposable sandbox
+  timeout: 300                    # fail-closed: timeout = denial
+  cron_mode: deny
+  single_query_mode: deny
+  unattended_mode: deny
+
+slack:
+  unauthorized_dm_behavior: "ignore"   # strangers get no reply (default "pair" prompts for a pairing code)
+  require_mention: true                # channels: only when @mentioned (DMs always answer)
+
+# Toolset allowlist per platform. Left out on purpose: browser, computer_use (large surface, Chromium may bypass
+# the proxy), web (search/scrape = prompt-injection channel), image_gen, tts, vision (not needed, cost),
+# cronjob (cron is denied), delegation (sub-agents: cost, harder to audit), code_execution (overlaps terminal),
+# connections (not needed).
+platform_toolsets:
+  slack: [terminal, file, todo, memory, session_search, clarify, skills]
+  cli: [terminal, file, todo, memory, session_search, clarify, skills]
