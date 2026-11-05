@@ -1,0 +1,24 @@
+# Secrets: never commit real credentials. Only *.example placeholders are tracked.
+secrets/*
+!secrets/*.example
+.env
+.env.*
+!.env.example
+*.env
+!*.env.example
+*.github_token
+*.token
+*.pem
+*.key
+
+# Per-agent runtime state (sessions, memory, logs, provider credentials)
+data/
+
+# Local scanner reports
+.reports/
+
+# Local agent and editor settings
+.claude/settings.local.json
+.idea/
+.vscode/
+.DS_Store
