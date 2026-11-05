@@ -1,0 +1,40 @@
+# Keeps pinned dependencies current. Each update arrives as a pull request: it gets the same CI and review as any
+# other change. The 7-day cooldown waits a week after a release before proposing it, because most malicious
+# releases are found and pulled within days.
+#
+# NOT covered by Dependabot, so update these by hand and re-verify them against the upstream source:
+#   - scanner image digests inside `run:` steps of .github/workflows/ci.yml (review at least monthly)
+#   - GH_VERSION and GH_SHA256 in agents/agent-example/Dockerfile (change both, verify the checksum)
+#   - the image tag mentioned in compose.yaml (localhost/example/hermes-agent-example:<tag>) and in docs/SETUP.md,
+#     which must follow the Hermes and gh versions in the Dockerfile
+# CI does not build or scan the agent image. Before merging a Docker update, build it and run `make scan-image`.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # FROM line of the agent image (the digest pin is updated together with the tag).
+  - package-ecosystem: docker
+    directory: /agents/agent-example
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+
+  # Proxy image in compose.yaml (tag and digest). The agent image is built locally and has no registry,
+  # so it is ignored.
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    ignore:
+      - dependency-name: "localhost/*"
