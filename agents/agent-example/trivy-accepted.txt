@@ -1,0 +1,7 @@
+# Accepted HIGH/CRITICAL image findings for agent-example. `make scan-image` fails on any finding not listed here.
+# One entry per line: <CVE-ID> <package>   # reason, who accepted it, date. Review each entry; do not accept in bulk.
+# check-trivy.sh reports entries that no longer appear in the scan: remove them.
+#
+# Starts empty on purpose. The pinned Hermes base image carries OS packages with known findings, so the first
+# `make scan-image` will probably list some. Decide for each: rebuild on a patched base, or accept it here in a
+# reviewed commit with a written reason.

@@ -1,0 +1,14 @@
+# Seeded into data/agent-example/ by scripts/init-dirs.sh only if absent. Keep minimal.
+# The managed config (managed-config.yaml, mounted read-only) overrides these keys. Check key names against
+# the current Hermes security and Slack docs before relying on them.
+approvals:
+  mode: manual      # never "off" / --yolo outside a disposable sandbox
+  timeout: 300      # fail-closed: timeout = denial
+  cron_mode: deny
+  single_query_mode: deny
+  unattended_mode: deny
+
+# Slack gateway. SLACK_ALLOWED_USERS in the env file is the primary control; these keys add defence in depth.
+slack:
+  unauthorized_dm_behavior: "ignore"   # default "pair" prompts strangers for a pairing code (flow undocumented)
+  require_mention: true                # channels: respond only when @mentioned (DMs always respond)
