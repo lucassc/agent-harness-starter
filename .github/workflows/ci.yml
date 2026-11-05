@@ -1,0 +1,116 @@
+# Static checks on every pull request and on main. Nothing here deploys, publishes or uses secrets.
+#
+# Every action is pinned by commit SHA and every scanner image by digest (resolved from the registry on
+# 2026-11-05 with `docker buildx imagetools inspect`). Dependabot does not update image digests inside `run:`
+# steps: re-resolve them by hand when you update a tool. Never copy a digest you have not resolved yourself.
+#
+# These steps run the same rule sets as `make lint` (scripts/lint.sh). That script uses locally installed tools,
+# so the versions can differ; if you change one, change the other.
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Cancel outdated runs of the same ref. Safe because this workflow only checks and never deploys. Keep this a
+# literal `true`: with an expression (`${{ ... }}`) Checkov 3.4.3 silently skips the whole file (exit 0, no results).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gitleaks:
+    name: Gitleaks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # full history: a secret removed in a later commit is still leaked
+          persist-credentials: false
+      - name: Scan git history for secrets
+        run: |
+          docker run --rm --user "$(id -u):$(id -g)" --cap-drop ALL --security-opt no-new-privileges \
+            -v "$PWD:/repo:ro" \
+            ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \
+            git /repo --redact --no-banner --verbose
+
+  semgrep:
+    name: Semgrep
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Static analysis
+        run: |
+          docker run --rm --user "$(id -u):$(id -g)" --cap-drop ALL --security-opt no-new-privileges \
+            --tmpfs /tmp -e HOME=/tmp \
+            -v "$PWD:/src:ro" -w /src \
+            semgrep/semgrep:1.183.0@sha256:2e45517a85e13a9cca14a2a00df6bb48affd66b8ebfae1b0991cd57578362fb0 \
+            semgrep scan --config p/default --config p/secrets --config p/docker-compose --config p/command-injection \
+            --error --metrics=off --disable-version-check .
+
+  trivy:
+    name: Trivy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Scan dependencies, secrets and misconfiguration
+        run: |
+          docker run --rm --user "$(id -u):$(id -g)" --cap-drop ALL --security-opt no-new-privileges \
+            --tmpfs /tmp -e HOME=/tmp -e TRIVY_CACHE_DIR=/tmp/trivy \
+            -v "$PWD:/src:ro" -w /src \
+            aquasec/trivy:0.76.1@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c \
+            fs --scanners vuln,secret,misconfig --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 .
+
+  checkov:
+    name: Checkov
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Scan Dockerfiles and workflows
+        run: |
+          docker run --rm --user "$(id -u):$(id -g)" --cap-drop ALL --security-opt no-new-privileges \
+            --tmpfs /tmp -e HOME=/tmp \
+            -v "$PWD:/src:ro" -w /src \
+            bridgecrew/checkov:3.4.3@sha256:bfe9d70bb7f044aba49bd99675813445f106dee6072da583f51008cb667f3a63 \
+            -d . --compact --quiet --skip-download
+
+  lint:
+    name: ShellCheck, actionlint, Compose
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: ShellCheck
+        run: |
+          docker run --rm --user "$(id -u):$(id -g)" --cap-drop ALL --security-opt no-new-privileges \
+            -v "$PWD:/mnt:ro" -w /mnt \
+            koalaman/shellcheck:v0.11.0@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d \
+            scripts/*.sh agents/*/*.sh
+      - name: actionlint
+        run: |
+          docker run --rm --user "$(id -u):$(id -g)" --cap-drop ALL --security-opt no-new-privileges \
+            -v "$PWD:/repo:ro" -w /repo \
+            rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 \
+            -color
+      - name: Compose syntax
+        # compose.yaml references secret files that are gitignored. Empty placeholders are enough to validate it.
+        run: |
+          touch secrets/agent-example.env secrets/agent-example.github_token
+          docker compose -f compose.yaml config -q
