@@ -6,22 +6,32 @@
 # carries its own OS packages, so expect scanner findings: review them and keep an explicit accepted-findings list.
 FROM nousresearch/hermes-agent:v0.22.6@sha256:d27689bc6e8581ec884a7227c9101fdaebf6c853cff8859020dac14f21452b4d
 
-# gh v2.103.3. SHA-256 from the official gh_2.103.3_checksums.txt (re-checked 2026-11-05).
-# To upgrade: change both values, verify the checksum (and `gh attestation verify -R cli/cli`), rebuild, re-scan.
+# gh v2.103.3. SHA-256 values from the official gh_2.103.3_checksums.txt (both architectures re-checked 2026-11-14).
+# To upgrade: change the version and both hashes, verify the checksums (and `gh attestation verify -R cli/cli`), rebuild, re-scan.
 ARG GH_VERSION=2.103.3
-ARG GH_SHA256=4c806978ffce1cec70853302a56d70ac6da4f19bae7adca4e1a8ab00633dd91d
+ARG GH_SHA256_AMD64=4c806978ffce1cec70853302a56d70ac6da4f19bae7adca4e1a8ab00633dd91d
+ARG GH_SHA256_ARM64=ee32df2323c8847f5fac6cb6b4b69ca75828e9329a8f22f677021f7b3306ce63
+# Set by BuildKit to the platform being built: amd64 on Intel/AMD hosts, arm64 on Apple Silicon. The base image
+# is multi-arch, so the gh binary must match it. Without BuildKit this is empty and the build fails on purpose.
+ARG TARGETARCH
 
 # The base image's default user is root (s6-overlay init); install as root, then switch below.
 USER root
-# Download, verify against the pinned hash (build fails on mismatch), install, clean up.
+# Pick the hash for this architecture, download, verify against it (build fails on mismatch), install, clean up.
 RUN set -eu; \
-    tarball="gh_${GH_VERSION}_linux_amd64.tar.gz"; \
+    case "${TARGETARCH:-}" in \
+      amd64) gh_sha256="${GH_SHA256_AMD64}" ;; \
+      arm64) gh_sha256="${GH_SHA256_ARM64}" ;; \
+      *) echo "unsupported TARGETARCH '${TARGETARCH:-}': build with BuildKit for linux/amd64 or linux/arm64" >&2; exit 1 ;; \
+    esac; \
+    dir="gh_${GH_VERSION}_linux_${TARGETARCH}"; \
+    tarball="${dir}.tar.gz"; \
     curl -fsSL --proto '=https' --tlsv1.2 -o "/tmp/${tarball}" \
       "https://github.com/cli/cli/releases/download/v${GH_VERSION}/${tarball}"; \
-    echo "${GH_SHA256}  /tmp/${tarball}" | sha256sum -c -; \
+    echo "${gh_sha256}  /tmp/${tarball}" | sha256sum -c -; \
     tar -xzf "/tmp/${tarball}" -C /tmp; \
-    install -D -m 0755 "/tmp/gh_${GH_VERSION}_linux_amd64/bin/gh" /usr/local/lib/gh/gh; \
-    rm -rf "/tmp/${tarball}" "/tmp/gh_${GH_VERSION}_linux_amd64"; \
+    install -D -m 0755 "/tmp/${dir}/bin/gh" /usr/local/lib/gh/gh; \
+    rm -rf "/tmp/${tarball}" "/tmp/${dir}"; \
     /usr/local/lib/gh/gh --version
 
 # gh on PATH is a wrapper that reads the token from the read-only file /etc/agent/github_token (compose secret),

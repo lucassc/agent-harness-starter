@@ -16,6 +16,9 @@ has not been run end to end:
 
 - Passes `make lint` (Gitleaks, ShellCheck, Semgrep, Checkov on the Dockerfile) and `docker compose config`.
 - The image has **not** been built or scanned from this repository. Run `make scan-image` yourself.
+- Linux is the reference platform. macOS (Intel and Apple Silicon) is supported on paper: the scripts and the
+  Dockerfile avoid GNU-only tools and handle both CPU architectures, but nobody has run the stack on a Mac from
+  this repository yet. See [docs/SETUP.md](docs/SETUP.md#macos-notes).
 - Slack, the approval flow and the GitHub flow are untested here. Items marked **VERIFY** in the files
   were not confirmed against current Hermes docs.
 - Generated and copied files are unreviewed until a human has read them. Review before you rely on them.
@@ -56,15 +59,16 @@ What it does **not** do, so you are not surprised:
 
 ## Quick start
 
-Needs Docker with Compose v2, `sudo` (once, for the data dir), `jq`, and the scanners listed in
-[docs/SETUP.md](docs/SETUP.md). The full walkthrough, including the Anthropic, Slack and GitHub setup,
+Needs Docker with Compose v2 (Linux, or Docker Desktop on macOS), `jq`, `sudo` on Linux (once, for the data dir),
+and the scanners listed in [docs/SETUP.md](docs/SETUP.md). On macOS use `gmake` (`brew install make`) instead of
+`make`: the system Make is too old and the Makefile refuses to run on it. The full walkthrough, including the Anthropic, Slack and GitHub setup,
 is there. Every step that writes something has a dry run first.
 
 ```bash
 make help                      # list targets
 make lint                      # static checks
 make init                      # dry run: show how the data dir would be created
-make init-apply                # create it for UID 10000, mode 700 (asks for sudo)
+make init-apply                # create it, mode 700 (Linux: UID 10000 via sudo; macOS: your user)
 umask 077
 install -m 600 secrets/agent-example.env.example secrets/agent-example.env   # then fill in real values
 # put the GitHub token in secrets/agent-example.github_token (see docs/SETUP.md section 3)

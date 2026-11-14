@@ -20,7 +20,7 @@ listed="$(sed 's/#.*//' "$accepted" | awk 'NF >= 2 {print $1, $2}' | sort -u)"
 
 new="$(comm -23 <(printf '%s\n' "$found") <(printf '%s\n' "$listed") | sed '/^$/d')"
 gone="$(comm -13 <(printf '%s\n' "$found") <(printf '%s\n' "$listed") | sed '/^$/d')"
-count() { [[ -n "$1" ]] && printf '%s\n' "$1" | wc -l || echo 0; }
+count() { [[ -n "$1" ]] && printf '%s\n' "$1" | wc -l | tr -d ' ' || echo 0; }   # BSD wc pads with spaces
 
 echo "   HIGH/CRITICAL (CVE + package): $(count "$found") found, $(count "$listed") accepted," \
      "$(count "$new") new, $(count "$gone") no longer present"

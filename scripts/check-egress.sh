@@ -53,7 +53,8 @@ if (( run )); then
 else
   echo "- (on --run) every other agent-* service must be unreachable from $agent"
 fi
-for other in "${others[@]}"; do
+# ${others[@]+...}: an empty array is an "unbound variable" under `set -u` on bash 3.2 (macOS).
+for other in ${others[@]+"${others[@]}"}; do
   check "other agent ($other) not resolvable/reachable from $agent" fail \
     sh -c 'curl -sS --noproxy "*" --max-time 5 -o /dev/null "http://'"$other"':8642/"'
 done

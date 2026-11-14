@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Create per-agent data dirs (mode 700, owned by the container UID) and seed config templates.
-# Dry-run by default: prints what it would do. Use --apply to act. Idempotent.
+# Create per-agent data dirs and seed config templates. Linux: mode 700, owned by the container UID (needs sudo).
+# macOS: mode 700, owned by you (no sudo; Docker Desktop reaches bind mounts as the host user).
+# Dry-run by default: prints what it would do. Use --apply to act. Idempotent. Works with bash 3.2 (macOS).
 # Usage: scripts/init-dirs.sh [--apply] <agent-name>      (for example: agent-example)
 set -euo pipefail
 
@@ -17,25 +18,35 @@ data="$root/data/$agent"
 tpl="$root/agents/$agent"
 [[ -d "$tpl" ]] || { echo "no such agent: $tpl does not exist" >&2; exit 2; }
 
+# Linux: the bind-mounted dir must belong to the container user, which needs root; the host user then needs sudo to
+# read it (intended). macOS: Docker Desktop's file sharing runs file access as the host user, so UID 10000 ownership
+# is neither needed nor reliable there; own the files as yourself and do not use sudo. UNTESTED on a real Mac.
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  as_root=(); owner=()
+  echo "platform: macOS, files owned by $(id -un), no sudo"
+else
+  as_root=(sudo); owner=(-o "$CONTAINER_UID" -g "$CONTAINER_GID")
+fi
+
 run() {
   echo "+ $*"
   if (( apply )); then "$@"; fi
 }
 
 (( apply )) || echo "DRY RUN (no changes). Re-run with --apply."
-echo "agent: $agent  data: $data  owner: $CONTAINER_UID:$CONTAINER_GID"
+echo "agent: $agent  data: $data${owner[*]+  owner: $CONTAINER_UID:$CONTAINER_GID}"
 
-# Bind-mounted dir must be writable by the container user; the host user then needs sudo to read it (intended).
-run sudo install -d -m 700 -o "$CONTAINER_UID" -g "$CONTAINER_GID" "$data"
+# ${arr[@]+"${arr[@]}"}: expands an empty array to nothing under `set -u` on bash 3.2 (macOS).
+run ${as_root[@]+"${as_root[@]}"} install -d -m 700 ${owner[@]+"${owner[@]}"} "$data"
 
 for f in config.yaml SOUL.md; do
   if [[ ! -f "$tpl/$f" ]]; then echo "skip $f: no template in agents/$agent/"; continue; fi
   # Dry-run never calls sudo (the dir is 700 and owned by the container UID); apply checks for real.
-  if (( apply )) && sudo test -e "$data/$f"; then
+  if (( apply )) && ${as_root[@]+"${as_root[@]}"} test -e "$data/$f"; then
     echo "keep $f: already present in data dir"
   else
     (( apply )) || echo "(seeds $f only if absent)"
-    run sudo install -m 600 -o "$CONTAINER_UID" -g "$CONTAINER_GID" "$tpl/$f" "$data/$f"
+    run ${as_root[@]+"${as_root[@]}"} install -m 600 ${owner[@]+"${owner[@]}"} "$tpl/$f" "$data/$f"
   fi
 done
 

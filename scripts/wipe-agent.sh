@@ -28,12 +28,25 @@ if [[ -n "$(docker compose -f "$root/compose.yaml" ps --status running -q "$serv
   exit 1
 fi
 
+# Linux: the data dir belongs to the container UID, so listing and deleting need sudo (-n: a dry run never prompts).
+# macOS: init-dirs.sh owns the files as the host user, so no sudo. ${arr[@]+...} keeps an empty array legal on bash 3.2.
+if [[ "$(uname -s)" == "Darwin" ]]; then sudo_n=(); sudo_do=(); else sudo_n=(sudo -n); sudo_do=(sudo); fi
+
 echo "would delete the contents of: $data"
-sudo -n find "$data" -mindepth 1 -maxdepth 1 -printf '  %f\n' 2>/dev/null || echo '  (listing needs sudo; run with sudo credentials cached)'
+# POSIX find only: no -printf (GNU-only). basename per entry works with GNU and BSD find.
+if listing="$("${sudo_n[@]+"${sudo_n[@]}"}" find "$data" -mindepth 1 -maxdepth 1 -exec basename {} \; 2>/dev/null)"; then
+  if [[ -n "$listing" ]]; then
+    while IFS= read -r name; do printf '  %s\n' "$name"; done <<<"$listing"
+  else
+    echo '  (empty)'
+  fi
+else
+  echo '  (listing needs sudo; run with sudo credentials cached)'
+fi
 
 if (( ! apply )); then echo "DRY RUN (no changes). Use --apply --yes to delete."; exit 0; fi
 (( yes )) || { echo "--apply needs --yes to confirm irreversible deletion" >&2; exit 2; }
 
-sudo find "$data" -mindepth 1 -delete
+"${sudo_do[@]+"${sudo_do[@]}"}" find "$data" -mindepth 1 -delete
 echo "wiped $agent state. Re-seed with: scripts/init-dirs.sh --apply $agent"
 echo "note: provider-side logs and rotated API keys are outside this script; revoke the agent's key if retiring it."

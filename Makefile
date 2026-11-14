@@ -8,6 +8,12 @@ SHELL := bash
 .DEFAULT_GOAL := help
 MAKEFLAGS += --no-builtin-rules --no-print-directory
 
+# macOS ships GNU Make 3.81, which ignores .SHELLFLAGS (no -e / pipefail): recipes would keep going after a failure.
+# Refuse it rather than run unsafely. Fix: brew install make, then run gmake instead of make.
+ifneq ($(findstring 3.81,$(MAKE_VERSION)),)
+  $(error GNU Make 3.81 ignores .SHELLFLAGS, so recipes would run without -e/pipefail. Install a newer one: brew install make, then run gmake)
+endif
+
 AGENTS := agent-example
 AGENT ?= agent-example
 ifeq ($(filter $(AGENT),$(AGENTS)),)
@@ -60,7 +66,7 @@ ps: ## Show container status
 init: ## Dry run: show how the data dir would be created
 	scripts/init-dirs.sh $(AGENT)
 
-init-apply: ## Create the data dir for UID 10000, mode 700 (asks for sudo)
+init-apply: ## Create the data dir, mode 700 (Linux: UID 10000 via sudo; macOS: your user)
 	scripts/init-dirs.sh --apply $(AGENT)
 
 wipe: ## Dry run only: show what deleting the agent's state would remove

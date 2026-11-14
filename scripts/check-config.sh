@@ -2,7 +2,7 @@
 # Assert that the managed config is in force for one agent. Hermes FAILS OPEN on a missing or invalid
 # /etc/hermes/config.yaml, so run this after every config change, rebuild or restart.
 # Dry-run by default: prints the checks. --run executes them with `docker compose exec` inside the agent container.
-# Usage: [EXPECT_GH_LOGIN=<machine-user>] scripts/check-config.sh [--run] <agent-name>
+# Usage: [EXPECT_GH_LOGIN=<machine-user>] scripts/check-config.sh [--run] <agent-name>      (Linux and macOS, bash 3.2+)
 set -euo pipefail
 
 run=0
@@ -50,8 +50,15 @@ check "gh present" "ok" \
 # shellcheck disable=SC2016  # expanded inside the container, not here
 check "GitHub token not in the container env" "absent" \
   sh -c 'if [ -n "${GITHUB_TOKEN:-}${GH_TOKEN:-}" ]; then echo present; else echo absent; fi'
-check "GitHub token file read-only, owned by the agent (uid:gid mode)" "10000:10000 400" \
-  sh -c 'stat -c "%u:%g %a" /etc/agent/github_token'
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  # Docker Desktop on macOS serves bind mounts as the host user, so the uid:gid seen in the container is not 10000
+  # (VERIFY on a real Mac). The mode is still checked; ownership is only enforced on a Linux host.
+  check "GitHub token file read-only (mode only on macOS)" "400" \
+    sh -c 'stat -c "%a" /etc/agent/github_token'
+else
+  check "GitHub token file read-only, owned by the agent (uid:gid mode)" "10000:10000 400" \
+    sh -c 'stat -c "%u:%g %a" /etc/agent/github_token'
+fi
 # Read-only API call through the wrapper; prints only the login, never the token.
 if [[ -n "$EXPECT_GH_LOGIN" ]]; then
   check "gh authenticates as the machine user" "$EXPECT_GH_LOGIN" \

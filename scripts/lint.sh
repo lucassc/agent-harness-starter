@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Static checks on this repo. Read-only: nothing is changed, nothing is started, no secret is printed.
 # Usage: scripts/lint.sh            (also: make lint)
-# Needs gitleaks, shellcheck, semgrep, checkov and docker on PATH (docs/SETUP.md, added in a later change).
+# Needs gitleaks, shellcheck, semgrep, checkov and docker on PATH (docs/SETUP.md). Works on Linux and macOS (bash 3.2).
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -22,7 +22,7 @@ gitleaks_committable() {
   tmp="$(mktemp -d)"
   git ls-files -co --exclude-standard -z \
     | while IFS= read -r -d '' f; do [[ -f "$f" ]] && printf '%s\0' "$f"; done \
-    | xargs -0 -r cp --parents -t "$tmp" --
+    | tar -cf - --null -T - | tar -xf - -C "$tmp"   # not `cp --parents` / `xargs -r`: GNU-only
   gitleaks dir "$tmp" --redact --no-banner --log-level warn || rc=$?
   rm -rf "$tmp"
   return "$rc"

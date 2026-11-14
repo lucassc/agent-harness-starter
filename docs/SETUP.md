@@ -30,13 +30,45 @@ Rules that apply throughout:
 
 ## 0. Prerequisites
 
-- Docker with Compose v2, on a Linux host with disk encryption. Tested here with Compose v2.32.4.
-- `sudo` (needed once to give the data dir to the container user), `jq` (the Trivy gate uses it).
+- Docker with Compose v2, on a Linux host with disk encryption (reference platform, tested here with Compose
+  v2.32.4), or Docker Desktop on macOS with FileVault on (not run end to end: see [macOS notes](#macos-notes)).
+- Linux: `sudo` (needed once to give the data dir to the container user). Both: `jq` (the Trivy gate uses it).
 - Scanners on your `PATH`: `gitleaks`, `checkov`, `semgrep`, `trivy`, `shellcheck`. Versions this was run
   with on 2026-11-05: gitleaks 8.30.1, checkov 3.3.29, semgrep 1.181.0, trivy 0.76.2, shellcheck 0.11.0.
 - Admin rights on the Slack workspace (or an admin who approves apps) and on the GitHub account or org.
 - Image digests are pinned in [compose.yaml](../compose.yaml) and the Dockerfile. Re-check them against the
   registry (`docker buildx imagetools inspect <image>:<tag>`) and re-scan before each upgrade.
+
+## macOS notes
+
+Linux is the reference platform. These changes make the repository **run on macOS on paper**; they were
+reviewed with ShellCheck and exercised on Linux (including a simulated `uname` = Darwin for the dry runs), not
+on a real Mac. Treat everything below as a starting point and report what breaks.
+
+- **Tools:** Docker Desktop (it includes Compose v2), then
+  `brew install make jq gitleaks shellcheck semgrep checkov trivy`. Homebrew installs GNU Make as `gmake`.
+- **Use `gmake`, not `make`.** macOS ships GNU Make 3.81, which ignores `.SHELLFLAGS`, so recipes would run
+  without `-e` and `pipefail` and keep going after a failure. The Makefile detects 3.81 and stops with an error.
+- **Scripts:** written for the system bash 3.2 and the BSD `find`, `tar`, `sed`: no GNU-only flags
+  (`find -printf`, `cp --parents`, `xargs -r`) and no bash 4 features (empty arrays are expanded with
+  `${arr[@]+"${arr[@]}"}`). Not run under bash 3.2 here (**VERIFY**).
+- **No sudo, no UID 10000 on the host:** `scripts/init-dirs.sh` and `scripts/wipe-agent.sh` act as your user on
+  macOS. Docker Desktop's file sharing reads and writes bind mounts as the host user, so owning `data/` as
+  UID 10000 is neither possible without root nor needed. If the container cannot write to `data/`, look there
+  first. The same goes for the GitHub token file in section 3 step 5: keep it owned by you, mode `0400`, and do
+  not `chown` it.
+- **Apple Silicon:** the Hermes base image and the Squid image are both published for `linux/arm64` (checked
+  with `docker buildx imagetools inspect` on 2026-11-14), so nothing is emulated. The Dockerfile picks the
+  `gh` binary and its SHA-256 by `TARGETARCH` (`amd64` or `arm64`), set by BuildKit. If you build with
+  `DOCKER_BUILDKIT=0` it stops with an error instead of installing the wrong binary.
+- **Trivy on arm64:** `trivy-accepted.txt` was built from an amd64 scan. The arm64 image can carry other
+  packages and findings. Review each new finding as usual; do not accept in bulk to get past the gate.
+- **Check results differ:** `scripts/check-config.sh` checks only the mode of the GitHub token file on macOS,
+  because the uid:gid seen in the container is probably not 10000 there (**VERIFY**). Re-run `make check` on a Linux
+  host before real use, and do not treat a macOS pass as proof of Linux behaviour.
+- **File sharing:** keep the repository in a folder Docker Desktop is allowed to share (by default under
+  `/Users`). macOS may block Desktop, Documents and iCloud folders for it (**VERIFY**).
+- **Disk encryption:** FileVault must be on (section 0).
 
 ## 1. Claude (model key)
 
@@ -137,8 +169,11 @@ The rest of this section describes the machine-user path with a fine-grained tok
    sudo chown 10000:10000 secrets/agent-example.github_token
    sudo chmod 0400 secrets/agent-example.github_token
    ```
-   To rotate it later: `sudo install -o 10000 -g 10000 -m 0400 <new-file> secrets/agent-example.github_token`,
-   then delete `<new-file>`. No restart is needed (the wrapper reads the file on every call).
+   On macOS skip both `sudo` lines and run `chmod 0400 secrets/agent-example.github_token` as yourself (see the
+   [macOS notes](#macos-notes)).
+   To rotate it later: `sudo install -o 10000 -g 10000 -m 0400 <new-file> secrets/agent-example.github_token`
+   (macOS: `install -m 0400 <new-file> secrets/agent-example.github_token`), then delete `<new-file>`. No restart
+   is needed (the wrapper reads the file on every call).
 6. Set the commit identity with `GIT_AUTHOR_*`/`GIT_COMMITTER_*` in `compose.yaml` (the placeholder is
    `agent@example.invalid`). Signed commits are not configured (the agent has no signing key); do not
    require them on the repository.
@@ -174,15 +209,15 @@ cd agent-harness-starter
 #    shellcheck, semgrep, checkov on the Dockerfiles, compose syntax. Same as: make lint
 scripts/lint.sh
 
-# 2. Create the data dir for the container user (UID 10000, mode 700). Dry-run first.
+# 2. Create the data dir, mode 700 (Linux: owned by the container UID 10000; macOS: owned by you). Dry-run first.
 scripts/init-dirs.sh agent-example
-scripts/init-dirs.sh --apply agent-example        # uses sudo
+scripts/init-dirs.sh --apply agent-example        # Linux: uses sudo; macOS: no sudo
 
 # 3. Create the real env file, then edit it (do not paste secrets into chat)
 umask 077
 install -m 600 secrets/agent-example.env.example secrets/agent-example.env
 $EDITOR secrets/agent-example.env                 # ANTHROPIC_API_KEY, SLACK_* (GitHub token: own file, section 3 step 5)
-stat -c '%a %n' secrets/agent-example.env         # must print 600
+ls -l secrets/agent-example.env                   # must start with -rw------- (same output on Linux and macOS)
 ```
 
 `scripts/lint.sh` skips its `docker compose config` step until the two secret files exist; run it again
@@ -285,5 +320,7 @@ Stop it when you are not using it: `docker compose stop` (restart policy is `"no
   version yet. Re-scan on every upgrade and record decisions in `trivy-accepted.txt`.
 - The scanners (Gitleaks, Semgrep, Trivy, Checkov) are not in the agent image; run them on your side or in CI.
 - Compose files have no Checkov/Trivy coverage, so `compose.yaml` hardening is reviewed by hand plus Semgrep.
+- macOS support is untested on real hardware (see [macOS notes](#macos-notes)); the Linux behaviour stays the
+  reference.
 - Whether Hermes honours the proxy variables for every outbound path (Slack client, model client, browser
   tools) is unverified. `check-egress.sh` tests curl only; watch Squid's access log for the rest.
