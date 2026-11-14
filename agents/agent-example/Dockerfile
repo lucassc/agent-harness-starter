@@ -4,7 +4,7 @@
 
 # Base: pinned by digest. On 2026-11-05 the tag v0.22.6 resolved to this digest in the registry. The base image
 # carries its own OS packages, so expect scanner findings: review them and keep an explicit accepted-findings list.
-FROM nousresearch/hermes-agent:v0.22.6@sha256:d27689bc6e8581ec884a7227c9101fdaebf6c853cff8859020dac14f21452b4d
+FROM nousresearch/hermes-agent:v0.23.0@sha256:adb7890916de63245523492be8f68f9d2095fecbec4e2a6dab7960381f0fc002
 
 # gh v2.103.3. SHA-256 values from the official gh_2.103.3_checksums.txt (both architectures re-checked 2026-11-14).
 # To upgrade: change the version and both hashes, verify the checksums (and `gh attestation verify -R cli/cli`), rebuild, re-scan.
